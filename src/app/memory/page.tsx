@@ -10,7 +10,7 @@ export default function MemoryPage() {
           <p className="text-sm uppercase tracking-[0.18em] text-cyan-300/80">Structured memory</p>
           <h1 className="mt-3 text-4xl font-semibold text-white">Project brain / entity graph</h1>
           <p className="mt-4 max-w-2xl text-base leading-8 text-slate-300">
-            This route exposes a structured, queryable layer for projects, workflows, capabilities, and operating context.
+            A working structured memory layer for OpenClaw projects, workflows, capabilities, and operational context.
           </p>
         </div>
 
@@ -35,9 +35,9 @@ export default function MemoryPage() {
                 <div>Tracked repos: {summary.repos.length}</div>
                 <div>Concierge persona: {summary.concierge.persona}</div>
                 <div>Phone provider: {summary.concierge.phoneProvider ?? "not configured"}</div>
-                <div>SMS provider: {summary.concierge.smsProvider ?? "draft-only"}</div>
-                <div>Email provider: {summary.concierge.emailProvider ?? "draft-only"}</div>
-                <div>Spending allowed: {summary.concierge.spendingAllowed ? "yes" : "no"}</div>
+                <div>Task templates: {summary.concierge.taskTemplates.join(", ") || "none"}</div>
+                <div>Recent venture outputs: {summary.recentVentureOutputs.length}</div>
+                <div>Known cron jobs: {summary.cronJobs.length}</div>
               </div>
             </div>
 

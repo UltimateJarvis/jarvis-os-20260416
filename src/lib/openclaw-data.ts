@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 
 const workspaceRoot = path.resolve(process.cwd(), "..", "..", "..");
 const artifactsRoot = path.join(workspaceRoot, "artifacts");
@@ -22,8 +23,47 @@ function safeReadJson<T>(filePath: string, fallback: T): T {
   }
 }
 
+function safeExec(command: string, cwd: string) {
+  try {
+    return execSync(command, { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "";
+  }
+}
+
 function countMatching(prefix: string, files: string[]) {
   return files.filter((file) => file.startsWith(prefix) && file.endsWith(".json")).length;
+}
+
+function listLatestFiles(dirPath: string, limit = 5) {
+  return safeReadDir(dirPath)
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const fullPath = path.join(dirPath, entry.name);
+      const stat = fs.statSync(fullPath);
+      return { name: entry.name, mtimeMs: stat.mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, limit);
+}
+
+function getRepoStatus(repoName: string) {
+  const repoPath = path.join(ventureFactoryRoot, "repos", repoName);
+  const status = safeExec("git status --short", repoPath);
+  const lastCommit = safeExec("git rev-parse --short HEAD", repoPath);
+  const branch = safeExec("git rev-parse --abbrev-ref HEAD", repoPath);
+  return {
+    name: repoName,
+    branch: branch || "unknown",
+    lastCommit: lastCommit || "—",
+    clean: status.length === 0,
+    dirtyFiles: status.length === 0 ? 0 : status.split(/\r?\n/).filter(Boolean).length,
+  };
+}
+
+function getCronJobs() {
+  const cronSnapshotPath = path.join(workspaceRoot, "automation", "jarvis-os-cron-snapshot.json");
+  return safeReadJson<{ jobs: Array<Record<string, unknown>> }>(cronSnapshotPath, { jobs: [] }).jobs;
 }
 
 export function getWorkspaceSummary() {
@@ -35,6 +75,8 @@ export function getWorkspaceSummary() {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
+
+  const repoStatuses = repoEntries.map(getRepoStatus);
 
   const dailyDirs = safeReadDir(path.join(ventureFactoryRoot, "daily"))
     .filter((entry) => entry.isDirectory())
@@ -60,6 +102,9 @@ export function getWorkspaceSummary() {
     .map((entry) => entry.name)
     .sort();
 
+  const recentVentureOutputs = listLatestFiles(path.join(artifactsRoot, "outputs", "venture_factory.daily"), 5);
+  const cronJobs = getCronJobs();
+
   return {
     projectsTracked: repoEntries.length,
     receipts: {
@@ -69,12 +114,15 @@ export function getWorkspaceSummary() {
       ventureFactoryRuns: countMatching("venture_factory.daily", receiptFiles),
     },
     repos: repoEntries,
+    repoStatuses,
     latestDaily: latestDaily
       ? {
           date: latestDaily,
           files: latestDailyFiles,
         }
       : null,
+    recentVentureOutputs,
+    cronJobs,
     concierge: {
       persona: conciergeConfig.persona_name,
       phoneProvider: conciergeConfig.phone_provider,
@@ -136,25 +184,22 @@ export function getProjectCards() {
 
 export function getWorkflowCards() {
   const summary = getWorkspaceSummary();
+  const cronBacked = summary.cronJobs.map((job) => ({
+    name: String(job.name ?? "Unnamed job"),
+    type: String((job.payload as { kind?: string } | undefined)?.kind ?? "cron job"),
+    status: String((job.state as { lastStatus?: string } | undefined)?.lastStatus ?? "scheduled"),
+    trigger: `${(job.schedule as { kind?: string; expr?: string; tz?: string } | undefined)?.expr ?? "schedule"} • ${(job.schedule as { tz?: string } | undefined)?.tz ?? "UTC"}`,
+    next: (job.state as { nextRunAtMs?: number } | undefined)?.nextRunAtMs
+      ? new Date((job.state as { nextRunAtMs: number }).nextRunAtMs).toLocaleString()
+      : "pending",
+  }));
+
   return [
-    {
-      name: "Daily venture scout",
-      type: "Research / build pipeline",
-      status: summary.receipts.ventureFactoryRuns > 0 ? "Healthy" : "Idle",
-      trigger: "Scheduled daily run",
-      next: "Managed via OpenClaw cron",
-    },
-    {
-      name: "Concierge inbound review",
-      type: "Phone / summary loop",
-      status: summary.concierge.phoneProvider ? "Partially live" : "Not configured",
-      trigger: "Manual until polling is scheduled",
-      next: summary.concierge.phoneProvider ? "Ready for cron wiring" : "Needs provider",
-    },
+    ...cronBacked,
     {
       name: "Artifact telemetry",
       type: "Workspace state reader",
-      status: "Healthy",
+      status: "healthy",
       trigger: "On dashboard load",
       next: `${summary.receipts.codingPlanRuns + summary.receipts.researchRuns} tracked runs available`,
     },
